@@ -1,0 +1,342 @@
+# coding:utf-8
+import os
+import json
+import sys
+import pandas as pd
+import numpy as np
+from scipy.stats import pearsonr
+import time
+
+# 添加上级目录到系统路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from data_manager import DataManager
+
+def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_date=None):
+    """
+    计算两只股票之间的收盘价和成交量的皮尔逊相关系数
+    
+    参数:
+    data_manager: DataManager实例
+    stock_a: 第一只股票代码
+    stock_b: 第二只股票代码
+    start_date: 开始日期
+    end_date: 结束日期，默认为当前日期
+    
+    返回:
+    包含相关系数和p值的字典，如果计算失败则返回None
+    """
+    if end_date is None:
+        end_date = time.strftime("%Y%m%d", time.localtime())
+    
+    # 获取两只股票的数据
+    data = data_manager.get_local_daily_data(['close', 'volume'], [stock_a, stock_b], start_date)
+    
+    if data is None or stock_a not in data or stock_b not in data:
+        print(f"数据获取失败，股票代码: {stock_a}, {stock_b}")
+        return None
+    #print(f"{data}")
+    if data[stock_a].empty or data[stock_b].empty:
+        print(f"数据为空，股票代码: {data[stock_a]}, {data[stock_b]}")
+        return None
+    
+    # 提取收盘价和成交量
+    a_close = data[stock_a]['close']
+    a_volume = data[stock_a]['volume']
+    b_close = data[stock_b]['close']
+    b_volume = data[stock_b]['volume']
+    
+    # 确保两个时间序列有共同的索引
+    common_index = a_close.index.intersection(b_close.index)
+    if len(common_index) < 5:  # 至少需要5个共同的交易日
+        print(f"数据不足，股票代码: {stock_a}, {stock_b}")
+        return None
+    
+    # 对齐数据
+    a_close_aligned = a_close.loc[common_index]
+    b_close_aligned = b_close.loc[common_index]
+    a_volume_aligned = a_volume.loc[common_index]
+    b_volume_aligned = b_volume.loc[common_index]
+    
+    try:
+        # 计算收盘价的相关系数
+        close_corr, close_p = pearsonr(a_close_aligned, b_close_aligned)
+        
+        # 计算成交量的相关系数
+        volume_corr, volume_p = pearsonr(a_volume_aligned, b_volume_aligned)
+        
+        return {
+            'close_corr': close_corr,
+            'close_p_value': close_p,
+            'volume_corr': volume_corr,
+            'volume_p_value': volume_p,
+            'data_points': len(common_index)
+        }
+    except Exception as e:
+        print(f"计算相关系数时出错: {str(e)}")
+        return None
+
+def prepare_industry_data():
+    """
+    准备行业分类数据，返回行业与股票代码的映射
+    
+    返回:
+    包含行业和股票代码的字典
+    """
+    # 读取行业分类文件
+    industry_file = os.path.join(os.path.dirname(__file__), "industry_classification.txt")
+    
+    if not os.path.exists(industry_file):
+        print(f"文件不存在: {industry_file}")
+        return {}
+    
+    # 存储行业分类的字典
+    industry_data = {}
+    
+    # 读取行业分类文件
+    with open(industry_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) >= 3:
+                industry = parts[0]
+                try:
+                    codes = json.loads(parts[2])
+                    
+                    # 分离北交所股票和A股股票
+                    bj_codes = [code for code in codes if code.endswith('.BJ')]
+                    a_codes = [code for code in codes if code.endswith('.SH') or code.endswith('.SZ')]
+                    
+                    if bj_codes and a_codes:
+                        industry_data[industry] = {
+                            'bj_codes': bj_codes,
+                            'a_codes': a_codes
+                        }
+                except json.JSONDecodeError:
+                    print(f"解析JSON失败: {parts[2]}")
+    
+    return industry_data
+
+def calculate_correlations():
+    """
+    读取industry_classification.txt，计算同一分组内北交所股票与A股股票的皮尔逊相关系数
+    """
+    # 初始化DataManager
+    data_manager = DataManager()
+    # 设置日期范围
+    start_date = '20241101'
+    end_date = time.strftime("%Y%m%d", time.localtime())
+    
+    # 准备行业数据
+    industry_data = prepare_industry_data()
+    
+    if not industry_data:
+        print("没有找到有效的行业分类数据")
+        return
+    
+    # 存储结果的字典
+    results = {}
+    
+    # 处理每个行业
+    for industry, codes in industry_data.items():
+        bj_codes = codes['bj_codes']
+        a_codes = codes['a_codes']
+        
+        print(f"处理行业: {industry}")
+        print(f"  北交所股票数量: {len(bj_codes)}")
+        print(f"  A股股票数量: {len(a_codes)}")
+        
+        # 计算每个北交所股票与每个A股股票的相关系数
+        industry_results = []
+        
+        for bj_code in bj_codes:
+            bj_results = {}
+            
+            for a_code in a_codes:
+                # 计算相关系数
+                corr_result = calculate_stock_correlation(
+                    data_manager, bj_code, a_code, start_date, end_date
+                )
+                
+                if corr_result:
+                    bj_results[a_code] = corr_result
+            
+            if bj_results:  # 如果有结果
+                # 按收盘价相关系数排序
+                sorted_results = sorted(
+                    bj_results.items(), 
+                    key=lambda x: x[1]['close_corr'], 
+                    reverse=True
+                )
+                
+                industry_results.append({
+                    'bj_code': bj_code,
+                    'correlations': sorted_results
+                })
+        
+        if industry_results:
+            results[industry] = industry_results
+    
+    # 输出结果
+    output_file = os.path.join(os.path.dirname(__file__), "correlation_results.txt")
+    
+    # 读取股票代码和名称的对应关系
+    stock_names = {}
+    
+    # 读取北交所股票代码和名称
+    bj_file = os.path.join(os.path.dirname(__file__), "codeB2industry")
+    if os.path.exists(bj_file):
+        with open(bj_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 2:
+                    code = parts[0]
+                    name = parts[1]
+                    stock_names[code] = name
+    
+    # 读取A股股票代码和名称
+    a_file = os.path.join(os.path.dirname(__file__), "codeA2industry")
+    if os.path.exists(a_file):
+        with open(a_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 2:
+                    code = parts[0]
+                    name = parts[1]
+                    stock_names[code] = name
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for industry, industry_results in results.items():
+            f.write(f"行业: {industry}\n")
+            f.write("=" * 50 + "\n")
+            
+            for bj_result in industry_results:
+                bj_code = bj_result['bj_code']
+                bj_name = stock_names.get(bj_code, "")
+                f.write(f"北交所股票: {bj_code}({bj_name})\n")
+                f.write("-" * 40 + "\n")
+                
+                # 输出前10个相关性最高的A股
+                for i, (a_code, corr_data) in enumerate(bj_result['correlations'][:10]):
+                    a_name = stock_names.get(a_code, "")
+                    if corr_data['close_corr'] < 0.5:
+                        continue
+                    f.write(f"  排名 {i+1}: {a_code}({a_name})\n")
+                    f.write(f"    收盘价相关系数: {corr_data['close_corr']:.4f} (p值: {corr_data['close_p_value']:.4f})\n")
+                    f.write(f"    成交量相关系数: {corr_data['volume_corr']:.4f} (p值: {corr_data['volume_p_value']:.4f})\n")
+                    f.write(f"    共同交易日数量: {corr_data['data_points']}\n")
+                
+                f.write("\n")
+            
+            f.write("\n\n")
+    
+    print(f"相关性分析结果已保存到: {output_file}")
+
+def check_data_ready():
+    """
+    检查数据完整性，确保所有股票从20241101至今的天级数据完整
+    要求有效数据至少为120条
+    """
+    print("开始检查数据完整性...")
+    
+    # 初始化DataManager
+    data_manager = DataManager()
+    
+    # 设置日期范围
+    start_date = '20241101'
+    end_date = time.strftime("%Y%m%d", time.localtime())
+    
+    # 准备行业数据
+    industry_data = prepare_industry_data()
+    
+    if not industry_data:
+        print("没有找到有效的行业分类数据")
+        return False
+    
+    # 收集所有股票代码
+    all_codes = set()
+    for industry, codes in industry_data.items():
+        all_codes.update(codes['bj_codes'])
+        all_codes.update(codes['a_codes'])
+    
+    print(f"共需检查 {len(all_codes)} 只股票的数据完整性")
+    
+    # 检查数据完整性
+    incomplete_stocks = []
+    missing_stocks = []
+    
+    # 批量检查，每次检查100只股票
+    batch_size = 100
+    code_batches = [list(all_codes)[i:i+batch_size] for i in range(0, len(all_codes), batch_size)]
+    
+    #调用一次触发xtdata的初始化，否则容易取到更多的空数据
+    data_manager.get_local_daily_data(['close'], ['002034.SZ'], start_date, end_date)
+    
+    for batch_idx, code_batch in enumerate(code_batches):
+        time.sleep(1)  # 每批次检查后暂停1秒
+        print(f"检查批次 {batch_idx+1}/{len(code_batches)}，共 {len(code_batch)} 只股票")
+        
+        # 获取数据
+        data = data_manager.get_local_daily_data(['close'], code_batch, start_date, end_date)
+        
+        if data is None:
+            print("数据获取失败")
+            missing_stocks.extend(code_batch)
+            continue
+        
+        # 检查每只股票的数据
+        for code in code_batch:
+            if code not in data:
+                print(f"  股票 {code} 数据不存在")
+                missing_stocks.append(code)
+                continue
+            
+            if data[code].empty:
+                print(f" {code} 数据为空")
+                missing_stocks.append(code)
+                continue
+            
+            # 检查数据点数量
+            data_points = len(data[code])
+            if data_points < 120:
+                print(f"  股票 {code} 数据不足，仅有 {data_points} 条记录")
+                incomplete_stocks.append((code, data_points))
+    
+    # 输出检查结果
+    if not missing_stocks and not incomplete_stocks:
+        print("所有股票数据完整，可以进行相关性分析")
+        return True
+    
+    # 如果有缺失或不完整的数据，尝试下载
+    if missing_stocks or incomplete_stocks:
+        print("\n发现数据不完整的股票，尝试下载数据...")
+        
+        # 合并需要下载的股票代码
+        download_codes = missing_stocks + [code for code, _ in incomplete_stocks]
+        print(f"需要下载 {len(download_codes)} 只股票的数据")
+        
+        # 下载数据
+        if download_codes:
+            print("开始下载数据...")
+            data_manager.download_data_async(download_codes, '1d', start_date)
+            print("数据下载完成，请稍后再次运行程序检查数据完整性")
+            return False
+    
+    return len(missing_stocks) == 0 and len(incomplete_stocks) == 0
+
+if __name__ == "__main__":
+    #if check_data_ready():
+    #    calculate_correlations()
+    #else:
+    #    print("数据准备不完整，请确保所有股票数据已下载且完整后再运行")
+    calculate_correlations()
+    sys.exit()
+    
+    """
+    data_manager = DataManager()
+    stock_a = '430139.BJ'
+    stock_b = '688449.SH'
+    start_date = '20241101'
+    data_manager.download_data_async([stock_a, stock_b], '1d', start_date)
+    ret = calculate_stock_correlation(data_manager, stock_a, stock_b, start_date)
+    print(ret)
+    """
+
