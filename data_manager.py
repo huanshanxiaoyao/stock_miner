@@ -10,7 +10,7 @@ class DataManager:
     def __init__(self):
         #调用一次触发xtdata的初始化，否则容易取到更多的空数据
         xtdata.get_local_data(['close'], ['002639.SZ'], period='1d', start_time="20241101", end_time="20241102")
-        time.sleep(1)
+        time.sleep(0.5)
         pass
 
     def download_data_async(self, all_codes, period, start_date, end_date=None):

@@ -1,6 +1,10 @@
 import os
 import json
 
+"""
+计划每个月更新一次
+上次更新时间：20250428
+"""
 def classify_stocks_by_industry(codeA_file, codeB_file):
     """
     根据行业对股票代码进行分类，当行业下股票数超过50时使用子行业分类

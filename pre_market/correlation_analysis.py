@@ -47,7 +47,7 @@ def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_
     
     # 确保两个时间序列有共同的索引
     common_index = a_close.index.intersection(b_close.index)
-    if len(common_index) < 5:  # 至少需要5个共同的交易日
+    if len(common_index) < 15:  # 至少需要15个共同的交易日
         print(f"数据不足，股票代码: {stock_a}, {stock_b}")
         return None
     
@@ -57,6 +57,59 @@ def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_
     a_volume_aligned = a_volume.loc[common_index]
     b_volume_aligned = b_volume.loc[common_index]
     
+    # 计算价格比值的对数序列 Xt = ln(北交所股票价格/A股股票价格)
+    try:
+        # 确保stock_a是北交所股票，stock_b是A股股票
+        if stock_a.endswith('.BJ'):
+            # 北交所股票价格/A股股票价格
+            price_ratio = a_close_aligned / b_close_aligned
+        else:
+            # 如果顺序相反，则计算b/a
+            price_ratio = b_close_aligned / a_close_aligned
+            
+        log_price_ratio = np.log(price_ratio)
+        
+        # 确保有足够的数据点计算z-score
+        if len(log_price_ratio) > 61:  # 需要至少61个点(60个历史点+1个当前点)
+            # 获取最新的数据点
+            latest_point = log_price_ratio.iloc[-1]
+            
+            # 获取最新数据点的日期 - 处理不同类型的索引
+            try:
+                if hasattr(log_price_ratio.index[-1], 'strftime'):
+                    latest_date = log_price_ratio.index[-1].strftime('%Y%m%d')
+                else:
+                    # 如果索引不是datetime对象，直接转为字符串
+                    latest_date = str(log_price_ratio.index[-1])
+            except Exception as e:
+                print(f"获取日期时出错: {str(e)}")
+                latest_date = "未知日期"
+            
+            # 获取倒数第2个到倒数第61个数据点(共60个点)用于计算均值和标准差
+            historical_points = log_price_ratio.iloc[-61:-1]
+            
+            # 计算均值和标准差
+            mean_value = historical_points.mean()
+            std_value = historical_points.std()
+            
+            # 计算z-score
+            if std_value != 0:  # 避免除以零
+                z_score = (latest_point - mean_value) / std_value
+                # 保存均值和标准差，方便后续使用
+                ratio_mean = mean_value
+                ratio_std = std_value
+            else:
+                z_score = 0
+                ratio_mean = mean_value
+                ratio_std = 0
+        else:
+            z_score = None
+            latest_date = None
+    except Exception as e:
+        print(f"计算价格比值对数序列时出错: {str(e)}")
+        z_score = None
+        latest_date = None
+    
     try:
         # 计算收盘价的相关系数
         close_corr, close_p = pearsonr(a_close_aligned, b_close_aligned)
@@ -64,13 +117,22 @@ def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_
         # 计算成交量的相关系数
         volume_corr, volume_p = pearsonr(a_volume_aligned, b_volume_aligned)
         
-        return {
+        result = {
             'close_corr': close_corr,
             'close_p_value': close_p,
             'volume_corr': volume_corr,
             'volume_p_value': volume_p,
             'data_points': len(common_index)
         }
+        
+        # 添加z-score到结果中
+        if z_score is not None:
+            result['price_ratio_z_score'] = z_score
+            result['price_ratio_mean'] = ratio_mean
+            result['price_ratio_std'] = ratio_std
+            result['latest_date'] = latest_date
+        
+        return result
     except Exception as e:
         print(f"计算相关系数时出错: {str(e)}")
         return None
@@ -83,7 +145,7 @@ def prepare_industry_data():
     包含行业和股票代码的字典
     """
     # 读取行业分类文件
-    industry_file = os.path.join(os.path.dirname(__file__), "industry_classification.txt")
+    industry_file = os.path.join(os.path.dirname(__file__), "../A2BJ/industry_classification.txt")
     
     if not os.path.exists(industry_file):
         print(f"文件不存在: {industry_file}")
@@ -175,14 +237,28 @@ def calculate_correlations():
         if industry_results:
             results[industry] = industry_results
     
+    # 输出结果到文件
+    output_correlation_results(results)
+
+def output_correlation_results(results):
+    """
+    将相关性分析结果输出到文件
+    
+    参数:
+    results: 包含相关性分析结果的字典
+    """
     # 输出结果
-    output_file = os.path.join(os.path.dirname(__file__), "correlation_results.txt")
+    output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shared")
+    # 确保shared目录存在
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    output_file = os.path.join(output_dir, "correlation_results.txt")
     
     # 读取股票代码和名称的对应关系
     stock_names = {}
     
     # 读取北交所股票代码和名称
-    bj_file = os.path.join(os.path.dirname(__file__), "codeB2industry")
+    bj_file = os.path.join(os.path.dirname(__file__), "../A2BJ/codeB2industry")
     if os.path.exists(bj_file):
         with open(bj_file, 'r', encoding='utf-8') as f:
             for line in f:
@@ -193,7 +269,7 @@ def calculate_correlations():
                     stock_names[code] = name
     
     # 读取A股股票代码和名称
-    a_file = os.path.join(os.path.dirname(__file__), "codeA2industry")
+    a_file = os.path.join(os.path.dirname(__file__), "../A2BJ/codeA2industry")
     if os.path.exists(a_file):
         with open(a_file, 'r', encoding='utf-8') as f:
             for line in f:
@@ -202,6 +278,9 @@ def calculate_correlations():
                     code = parts[0]
                     name = parts[1]
                     stock_names[code] = name
+    
+    # 创建JSON格式的相似度数据
+    similarity_data = {}
     
     with open(output_file, 'w', encoding='utf-8') as f:
         for industry, industry_results in results.items():
@@ -214,6 +293,9 @@ def calculate_correlations():
                 f.write(f"北交所股票: {bj_code}({bj_name})\n")
                 f.write("-" * 40 + "\n")
                 
+                # 为JSON输出准备数据
+                similar_stocks = []
+                
                 # 输出前10个相关性最高的A股
                 for i, (a_code, corr_data) in enumerate(bj_result['correlations'][:10]):
                     a_name = stock_names.get(a_code, "")
@@ -223,12 +305,44 @@ def calculate_correlations():
                     f.write(f"    收盘价相关系数: {corr_data['close_corr']:.4f} (p值: {corr_data['close_p_value']:.4f})\n")
                     f.write(f"    成交量相关系数: {corr_data['volume_corr']:.4f} (p值: {corr_data['volume_p_value']:.4f})\n")
                     f.write(f"    共同交易日数量: {corr_data['data_points']}\n")
+                    
+                    # 添加z-score输出
+                    if 'price_ratio_z_score' in corr_data:
+                        f.write(f"    价格比值z-score: {corr_data['price_ratio_z_score']:.4f} (日期: {corr_data['latest_date']})\n")
+                    
+                    # 收集相似度大于0.6的股票
+                    if corr_data['close_corr'] >= 0.6:
+                        stock_info = {
+                            "code": a_code,
+                            "similarity": round(corr_data['close_corr'], 4)
+                        }
+                        
+                        # 添加z-score到JSON输出
+                        if 'price_ratio_z_score' in corr_data:
+                            stock_info["z_score"] = round(corr_data['price_ratio_z_score'], 4)
+                            stock_info["mean"] = round(corr_data['price_ratio_mean'], 4)
+                            stock_info["std"] = round(corr_data['price_ratio_std'], 4)
+                            stock_info["date"] = corr_data['latest_date']
+                        similar_stocks.append(stock_info)
                 
                 f.write("\n")
+                
+                # 将相似股票添加到数据中
+                if similar_stocks:
+                    similarity_data[bj_code] = {
+                        "name": bj_name,
+                        "similar_stocks": similar_stocks
+                    }
             
             f.write("\n\n")
     
+    # 输出JSON格式的相似度数据
+    json_output_file = os.path.join(output_dir, "correlation_results.json")
+    with open(json_output_file, 'w', encoding='utf-8') as f:
+        json.dump(similarity_data, f, ensure_ascii=False, indent=2)
+    
     print(f"相关性分析结果已保存到: {output_file}")
+    print(f"JSON格式的相似度数据已保存到: {json_output_file}")
 
 def check_data_ready():
     """
