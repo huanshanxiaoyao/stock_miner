@@ -10,6 +10,7 @@ import time
 # 添加上级目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
+from stock_code_config import BJ50,BJ_BLACKLIST 
 
 def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_date=None):
     """
@@ -296,10 +297,10 @@ def output_correlation_results(results):
                 # 为JSON输出准备数据
                 similar_stocks = []
                 
-                # 输出前10个相关性最高的A股
-                for i, (a_code, corr_data) in enumerate(bj_result['correlations'][:10]):
+                # 输出前5个相关性最高的A股
+                for i, (a_code, corr_data) in enumerate(bj_result['correlations'][:4]):
                     a_name = stock_names.get(a_code, "")
-                    if corr_data['close_corr'] < 0.5:
+                    if corr_data['close_corr'] < 0.5:#TODO
                         continue
                     f.write(f"  排名 {i+1}: {a_code}({a_name})\n")
                     f.write(f"    收盘价相关系数: {corr_data['close_corr']:.4f} (p值: {corr_data['close_p_value']:.4f})\n")
@@ -311,7 +312,7 @@ def output_correlation_results(results):
                         f.write(f"    价格比值z-score: {corr_data['price_ratio_z_score']:.4f} (日期: {corr_data['latest_date']})\n")
                     
                     # 收集相似度大于0.6的股票
-                    if corr_data['close_corr'] >= 0.6:
+                    if corr_data['close_corr'] >= 0.65:#TODO
                         stock_info = {
                             "code": a_code,
                             "similarity": round(corr_data['close_corr'], 4)
@@ -328,13 +329,25 @@ def output_correlation_results(results):
                 f.write("\n")
                 
                 # 将相似股票添加到数据中
-                if similar_stocks:
+                if similar_stocks and len(similar_stocks) >= 2 and bj_code in BJ50 and bj_code not in BJ_BLACKLIST:
                     similarity_data[bj_code] = {
                         "name": bj_name,
                         "similar_stocks": similar_stocks
                     }
             
             f.write("\n\n")
+    
+    # 统计北交所股票和相似股票的数量
+    total_bj_codes = len(similarity_data)
+    all_similar_codes = set()
+    for bj_data in similarity_data.values():
+        for stock in bj_data['similar_stocks']:
+            all_similar_codes.add(stock['code'])
+    total_similar_codes = len(all_similar_codes)
+    
+    print(f"统计结果:")
+    print(f"  - 具有相似股票的北交所股票数量: {total_bj_codes}")
+    print(f"  - 去重后的相似A股数量: {total_similar_codes}")
     
     # 输出JSON格式的相似度数据
     json_output_file = os.path.join(output_dir, "correlation_results.json")

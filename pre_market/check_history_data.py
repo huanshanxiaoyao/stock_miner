@@ -46,7 +46,7 @@ def check_and_download_daily_data(data_manager, stock_codes, start_date, end_dat
                 need_download = True
             else:
                 # 检查数据是否足够130个交易日
-                if len(data[code]) < 130:
+                if len(data[code]) < 150:
                     print(f"股票 {code} 的交易日数据不足，仅有 {len(data[code])} 个交易日，需要下载")
                     missing_codes.append(code)
                     need_download = True
@@ -112,7 +112,7 @@ def check_and_download_minutes_data(data_manager, stock_codes, start_date, end_d
             else:
                 # 检查数据是否足够
                 # 分钟级数据每天约240个数据点，30天大概有20个交易日，这里取19*240=4560
-                if len(data[code]) < 4560:  # 设置一个较低的阈值，考虑到节假日等因素
+                if len(data[code]) < 4800:  # 设置一个较低的阈值，考虑到节假日等因素
                     print(f"股票 {code} 的分钟级数据不足，仅有 {len(data[code])} 个数据点，需要下载")
                     missing_codes.append(code)
                     need_download = True
