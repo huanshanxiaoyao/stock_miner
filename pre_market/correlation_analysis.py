@@ -10,7 +10,7 @@ import time
 # 添加上级目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
-from stock_code_config import BJ50,BJ_BLACKLIST 
+from stock_code_config import BJ50,BJ50_BLACKLIST 
 
 def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_date=None):
     """
@@ -329,7 +329,7 @@ def output_correlation_results(results):
                 f.write("\n")
                 
                 # 将相似股票添加到数据中
-                if similar_stocks and len(similar_stocks) >= 2 and bj_code in BJ50 and bj_code not in BJ_BLACKLIST:
+                if similar_stocks and len(similar_stocks) >= 2 and bj_code in BJ50 and bj_code not in BJ50_BLACKLIST:
                     similarity_data[bj_code] = {
                         "name": bj_name,
                         "similar_stocks": similar_stocks
