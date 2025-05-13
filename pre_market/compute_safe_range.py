@@ -277,11 +277,14 @@ def output_results_to_json(results, output_file=None):
         # 创建文件名
         current_date = datetime.now().strftime("%Y%m%d")
         output_file = os.path.join(output_dir, f"stock_safe_range_{current_date}.json")
+        output_file2 = os.path.join(output_dir, f"stock_safe_range.json")
     
     # 写入文件
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(json_str)
     
+    with open(output_file2, 'w', encoding='utf-8') as f:
+        f.write(json_str)
     print(f"结果已保存到: {output_file}")
     return output_file
 
