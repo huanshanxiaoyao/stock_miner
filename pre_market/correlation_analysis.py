@@ -450,11 +450,11 @@ def check_data_ready():
     return len(missing_stocks) == 0 and len(incomplete_stocks) == 0
 
 if __name__ == "__main__":
-    #if check_data_ready():
-    #    calculate_correlations()
-    #else:
-    #    print("数据准备不完整，请确保所有股票数据已下载且完整后再运行")
-    calculate_correlations()
+    if check_data_ready():
+        calculate_correlations()
+    else:
+        print("数据准备不完整，请确保所有股票数据已下载且完整后再运行")
+    #calculate_correlations()
     sys.exit()
     
     """

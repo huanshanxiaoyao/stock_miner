@@ -293,7 +293,6 @@ def main():
     主函数，处理股票列表并计算安全交易区间
     """
     # 股票代码列表
-    tickers = ['430139.BJ', '600000.SH', '833171.BJ']
     tickers = BJ50_Trust
     
     # 初始化DataManager
