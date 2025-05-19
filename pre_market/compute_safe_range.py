@@ -120,7 +120,8 @@ def compute_safe_range(ticker):
     # 获取历史数据
     data = get_historical_data(ticker)
     
-    if data is None:
+    if data is None or len(data) < 110:
+        print(f"警告: 股票 {ticker} 的数据不足，无法计算安全区间")
         return None
     
     # 获取最新收盘价
@@ -293,7 +294,8 @@ def main():
     主函数，处理股票列表并计算安全交易区间
     """
     # 股票代码列表
-    tickers = BJ50_Trust
+    #tickers = BJ50_Trust
+    tickers = HS300 + BJ50_Trust
     
     # 初始化DataManager
     data_manager = DataManager()

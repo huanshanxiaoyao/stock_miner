@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 # 添加上级目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
-from stock_code_config import SH50, BJ50
+from stock_code_config import BJ50, HS300
+from date_utils import get_trading_days
 
 def check_and_download_daily_data(data_manager, stock_codes, start_date, end_date=None):
     """
@@ -28,6 +29,9 @@ def check_and_download_daily_data(data_manager, stock_codes, start_date, end_dat
     
     # 先尝试获取本地数据
     data = data_manager.get_local_daily_data(['close', 'volume'], stock_codes, start_date, end_date)
+
+    trade_days = get_trading_days(start_date, end_date)
+    trade_days_count = len(trade_days)
     
     # 检查数据是否存在且充足
     need_download = False
@@ -46,7 +50,7 @@ def check_and_download_daily_data(data_manager, stock_codes, start_date, end_dat
                 need_download = True
             else:
                 # 检查数据是否足够130个交易日
-                if len(data[code]) < 150:
+                if len(data[code]) < trade_days_count:
                     print(f"股票 {code} 的交易日数据不足，仅有 {len(data[code])} 个交易日，需要下载")
                     missing_codes.append(code)
                     need_download = True
@@ -89,11 +93,12 @@ def check_and_download_minutes_data(data_manager, stock_codes, start_date, end_d
     返回:
     下载后的数据
     """
-    print(f"检查分钟级数据是否存在...")
-    
+    trade_days = get_trading_days(start_date, end_date)
+    trade_days_count = len(trade_days)
+    print(f"检查分钟级数据是否存在...{trade_days_count}")
     # 先尝试获取本地数据
     data = data_manager.get_local_minutes_data(['close','volume'], stock_codes, start_date, end_date)
-    
+
     # 检查数据是否存在且充足
     need_download = False
     missing_codes = []
@@ -111,8 +116,9 @@ def check_and_download_minutes_data(data_manager, stock_codes, start_date, end_d
                 need_download = True
             else:
                 # 检查数据是否足够
-                # 分钟级数据每天约240个数据点，30天大概有20个交易日，这里取19*240=4560
-                if len(data[code]) < 4800:  # 设置一个较低的阈值，考虑到节假日等因素
+                # 分钟级数据每天约240个数据点
+                
+                if len(data[code]) < trade_days_count * 240 *2: 
                     print(f"股票 {code} 的分钟级数据不足，仅有 {len(data[code])} 个数据点，需要下载")
                     missing_codes.append(code)
                     need_download = True
@@ -200,7 +206,7 @@ def main():
     related_codes = get_related_codes()
     
     # 合并股票代码列表，BJ50和SH50是默认必选的
-    all_codes = set(SH50 + BJ50)  # 使用集合避免重复
+    all_codes = set(HS300 + BJ50)  # 使用集合避免重复
     
     # 如果从correlation_results.json中读取到股票代码，也加入进来
     if related_codes:

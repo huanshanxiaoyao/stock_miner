@@ -298,6 +298,7 @@ def output_correlation_results(results):
                 similar_stocks = []
                 
                 # 输出前5个相关性最高的A股
+                # 目前有订阅数量不能超过100的限制，所以下面做了一些过滤，减少生成数量
                 for i, (a_code, corr_data) in enumerate(bj_result['correlations'][:4]):
                     a_name = stock_names.get(a_code, "")
                     if corr_data['close_corr'] < 0.5:#TODO
