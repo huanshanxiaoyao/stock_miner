@@ -10,6 +10,7 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
 from stock_code_config import *
+from date_utils import get_trading_days
 
 def get_historical_data(ticker, days=120):
     """
@@ -25,6 +26,7 @@ def get_historical_data(ticker, days=120):
     # 计算开始日期 - 为确保获取足够的交易日数据，使用更长的时间跨度
     end_date = datetime.now()
     start_date = end_date - timedelta(days=190)  # 使用180天来确保获取120个交易日
+
     
     # 初始化DataManager
     data_manager = DataManager()
@@ -32,11 +34,14 @@ def get_historical_data(ticker, days=120):
     # 格式化日期为字符串
     start_date_str = start_date.strftime("%Y%m%d")
     end_date_str = end_date.strftime("%Y%m%d")
+
+    trading_days = get_trading_days(start_date_str, end_date_str)
+    trading_days_count = len(trading_days)
     
     # 使用DataManager获取数据
     data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)
     
-    if data_dict is None or ticker not in data_dict or data_dict[ticker].empty:
+    if data_dict is None or ticker not in data_dict or data_dict[ticker].empty or len(data_dict[ticker]) < trading_days_count:
         print(f"警告: 无法获取 {ticker} 的数据，尝试下载...")
         data_manager.download_data_sync([ticker], '1d', start_date_str, end_date_str)
         data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)

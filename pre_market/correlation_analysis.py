@@ -6,11 +6,13 @@ import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 import time
+from datetime import datetime, timedelta
 
 # 添加上级目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
 from stock_code_config import BJ50,BJ50_BLACKLIST 
+from date_utils import get_trading_days
 
 def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_date=None):
     """
@@ -48,7 +50,8 @@ def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_
     
     # 确保两个时间序列有共同的索引
     common_index = a_close.index.intersection(b_close.index)
-    if len(common_index) < 15:  # 至少需要15个共同的交易日
+    #print(f"{stock_a},{stock_b},common index:{common_index}")
+    if len(common_index) < 100:  # 至少需要15个共同的交易日
         print(f"数据不足，股票代码: {stock_a}, {stock_b}")
         return None
     
@@ -185,7 +188,7 @@ def calculate_correlations():
     # 初始化DataManager
     data_manager = DataManager()
     # 设置日期范围
-    start_date = '20241101'
+    start_date = (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")
     end_date = time.strftime("%Y%m%d", time.localtime())
     
     # 准备行业数据
@@ -360,7 +363,7 @@ def output_correlation_results(results):
 
 def check_data_ready():
     """
-    检查数据完整性，确保所有股票从20241101至今的天级数据完整
+    检查数据完整性，确保所有股票从过去180天至今的天级数据完整
     要求有效数据至少为120条
     """
     print("开始检查数据完整性...")
@@ -368,9 +371,15 @@ def check_data_ready():
     # 初始化DataManager
     data_manager = DataManager()
     
-    # 设置日期范围
-    start_date = '20241101'
+    # 设置日期范围 - 获取180天前的日期
+    start_date = (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")
     end_date = time.strftime("%Y%m%d", time.localtime())
+    # 获取180天前的交易日作为起始日期
+    trading_days = get_trading_days(start_date, end_date)
+    trading_day_count = len(trading_days)
+    
+    print(f"数据检查日期范围: {start_date} 至 {end_date}")
+    print(f"交易日总数: {len(trading_days)}")
     
     # 准备行业数据
     industry_data = prepare_industry_data()
@@ -399,7 +408,7 @@ def check_data_ready():
     data_manager.get_local_daily_data(['close'], ['002034.SZ'], start_date, end_date)
     
     for batch_idx, code_batch in enumerate(code_batches):
-        time.sleep(1)  # 每批次检查后暂停1秒
+        time.sleep(0.1)  # 每批次检查后暂停1秒
         print(f"检查批次 {batch_idx+1}/{len(code_batches)}，共 {len(code_batch)} 只股票")
         
         # 获取数据
@@ -424,8 +433,9 @@ def check_data_ready():
             
             # 检查数据点数量
             data_points = len(data[code])
-            if data_points < 120:
-                print(f"  股票 {code} 数据不足，仅有 {data_points} 条记录")
+            #print(f"  股票 {code} 数据点数量: {data_points}, 时间索引: {data[code].index.tolist()}")
+            if data_points < trading_day_count:
+                print(f"  股票 {code} 数据不足，仅有 {data_points} 条记录, 预期: {trading_day_count} 条记录")
                 incomplete_stocks.append((code, data_points))
     
     # 输出检查结果
@@ -453,6 +463,7 @@ def check_data_ready():
 if __name__ == "__main__":
     if check_data_ready():
         calculate_correlations()
+        pass
     else:
         print("数据准备不完整，请确保所有股票数据已下载且完整后再运行")
     #calculate_correlations()
