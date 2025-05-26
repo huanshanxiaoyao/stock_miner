@@ -11,8 +11,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
 from stock_code_config import *
 from date_utils import get_trading_days
+from simple_log import init_logging
 
-def get_historical_data(ticker, days=120):
+CalendarDaysCount = 190
+LongSMALength = 55
+logger = init_logging("compute_safe_range")
+
+def get_historical_data(ticker):
     """
     获取股票的历史数据
     
@@ -25,7 +30,7 @@ def get_historical_data(ticker, days=120):
     """
     # 计算开始日期 - 为确保获取足够的交易日数据，使用更长的时间跨度
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=190)  # 使用180天来确保获取120个交易日
+    start_date = end_date - timedelta(days=CalendarDaysCount)  # 使用180天来确保获取120个交易日
 
     
     # 初始化DataManager
@@ -42,25 +47,22 @@ def get_historical_data(ticker, days=120):
     data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)
     
     if data_dict is None or ticker not in data_dict or data_dict[ticker].empty or len(data_dict[ticker]) < trading_days_count:
-        print(f"警告: 无法获取 {ticker} 的数据，尝试下载...")
+        logger.warning(f"警告: 无法获取 {ticker} 的数据，尝试下载...")
         data_manager.download_data_sync([ticker], '1d', start_date_str, end_date_str)
         data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)
         
-        if data_dict is None or ticker not in data_dict or data_dict[ticker].empty:
-            print(f"错误: 无法获取 {ticker} 的数据")
+        if data_dict is None or ticker not in data_dict or data_dict[ticker].empty or len(data_dict[ticker]) < trading_days_count:
+            logger.error(f"错误: 无法获取 {ticker} 的数据 退出")
             return None
     
     # 转换为与原代码兼容的格式
     data = data_dict[ticker].copy()
     data.rename(columns={'close': 'Close', 'high': 'High', 'low': 'Low'}, inplace=True)
     
-    # 确保我们至少有所需的交易日数量
-    if len(data) < days:
-        print(f"警告: 只获取到 {len(data)} 个交易日数据，少于请求的 {days} 个")
     
-    return data.tail(days)  # 返回最近的days个交易日数据
+    return data # 返回最近的days个交易日数据
 
-def calculate_ema(data, period=55):
+def calculate_ema(data, period=LongSMALength ):
     """
     计算指数移动平均线(EMA)
     
@@ -125,15 +127,15 @@ def compute_safe_range(ticker):
     # 获取历史数据
     data = get_historical_data(ticker)
     
-    if data is None or len(data) < 110:
-        print(f"警告: 股票 {ticker} 的数据不足，无法计算安全区间")
+    if data is None or len(data) < LongSMALength *2:
+        logger.warning(f"警告: 股票 {ticker} 的数据不足，无法计算安全区间")
         return None
     
     # 获取最新收盘价
     latest_close = data['Close'].iloc[-1]
     
     # 计算长期安全区间 (EMA55 + ATR20)
-    ema55 = calculate_ema(data, 55)
+    ema55 = calculate_ema(data, LongSMALength )
     atr20 = calculate_atr(data, 20)
     long_term_upper = ema55.iloc[-1] + (atr20.iloc[-1] * 2.0)
     long_term_lower = ema55.iloc[-1] - (atr20.iloc[-1] * 2.0)
@@ -208,7 +210,7 @@ def get_stock_name(ticker):
     
     # 检查文件是否存在
     if not os.path.exists(file_path):
-        print(f"警告: 文件不存在 {file_path}")
+        logger.warning(f"警告: 文件不存在 {file_path}")
         return ""
     
     # 读取文件查找股票名称
@@ -219,7 +221,7 @@ def get_stock_name(ticker):
                 if len(parts) >= 2 and parts[0] == ticker:
                     return parts[1]
     except Exception as e:
-        print(f"读取股票名称时出错: {str(e)}")
+        logger.error(f"读取股票名称时出错: {str(e)}")
     
     return ""
 
@@ -272,6 +274,7 @@ def output_results_to_json(results, output_file=None):
     """
     # 格式化为JSON
     json_str = format_stock_data_to_json(results)
+    json_data = json.loads(json_str)
     
     # 如果未指定输出文件，则在shared目录创建
     if output_file is None:
@@ -285,13 +288,61 @@ def output_results_to_json(results, output_file=None):
         output_file = os.path.join(output_dir, f"stock_safe_range_{current_date}.json")
         output_file2 = os.path.join(output_dir, f"stock_safe_range.json")
     
+    # 在写入之前检查当前要写的内容和当前文件内容（即前一天计算结果）的diff
+    has_significant_change = False
+    
+    # 检查前一天的结果文件是否存在
+    if os.path.exists(output_file2):
+        try:
+            # 读取前一天的结果
+            with open(output_file2, 'r', encoding='utf-8') as f:
+                old_data = json.load(f)
+                
+            # 比较每支股票的数值变化
+            for ticker, new_stock_data in json_data.items():
+                if ticker in old_data:
+                    old_stock_data = old_data[ticker]
+                    
+                    # 检查各项指标的变化
+                    fields_to_check = [
+                        "long_ema55",  
+                        "short_ema8", 
+                    ]
+                    
+                    for field in fields_to_check:
+                        if field in new_stock_data and field in old_stock_data:
+                            new_value = new_stock_data[field]
+                            old_value = old_stock_data[field]
+                            
+                            # 避免除以零错误
+                            if old_value != 0:
+                                change_percent = abs((new_value - old_value) / old_value * 100)
+                                
+                                # 如果变化大于5%，记录到日志
+                                if change_percent > 5:
+                                    logger.warning(f"股票 {ticker} ({new_stock_data.get('name', '')}) 的 {field} 变化较大: {old_value} -> {new_value}, 变化率: {change_percent:.2f}%")
+                                    has_significant_change = True
+        except Exception as e:
+            logger.error(f"比较数据时出错: {str(e)}")
+    
     # 写入文件
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(json_str)
     
     with open(output_file2, 'w', encoding='utf-8') as f:
         f.write(json_str)
-    print(f"结果已保存到: {output_file}")
+    
+    logger.info(f"结果已保存到: {output_file}")
+    
+    # 如果没有任何变化大于5%的情况，则生成一个标记文件
+    if not has_significant_change:
+        mark_file = os.path.join(output_dir, f"safe_range_done_{current_date}")
+        with open(mark_file, 'w', encoding='utf-8') as f:
+            f.write(f"计算完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"成功计算了 {len(json_data)} 支股票的指标\n")
+            f.write(f"没有发现任何股票的指标变化超过5%\n")
+        logger.info(f"没有发现显著变化，已生成标记文件: {mark_file} 本次共完成 {len(json_data)} 支股票的指标计算")
+    
     return output_file
 
 def main():
@@ -307,7 +358,7 @@ def main():
     
     # 计算开始日期和结束日期
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=180)
+    start_date = end_date - timedelta(days=CalendarDaysCount )
     
     # 格式化日期为字符串
     start_date_str = start_date.strftime("%Y%m%d")
@@ -318,10 +369,10 @@ def main():
         data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)
         
         if data_dict is None or ticker not in data_dict or data_dict[ticker].empty:
-            print(f"股票 {ticker} 的历史数据不存在，正在下载...")
+            logger.info(f"股票 {ticker} 的历史数据不存在，正在下载...")
             data_manager.download_data_sync([ticker], '1d', start_date_str, end_date_str)
             time.sleep(1)  # 防止过于频繁的下载
-            print(f"股票 {ticker} 的历史数据下载完成")
+            logger.info(f"股票 {ticker} 的历史数据下载完成")
     
     # 计算每个股票的安全交易区间
     results = []
@@ -330,15 +381,15 @@ def main():
         result = compute_safe_range(ticker)
         if result:
             results.append(result)
-            print(f"已计算 {ticker} 的安全交易区间")
+            logger.info(f"已计算 {ticker} 的安全交易区间")
         else:
-            print(f"无法计算 {ticker} 的安全交易区间")
+            logger.warning(f"无法计算 {ticker} 的安全交易区间")
     
     # 输出结果到JSON文件
     json_file = output_results_to_json(results)
     
     # 打印JSON文件路径
-    print(f"JSON文件已保存到: {json_file}")
+    logger.info(f"JSON文件已保存到: {json_file}")
     
     return results
 

@@ -49,7 +49,6 @@ def check_and_download_daily_data(data_manager, stock_codes, start_date, end_dat
                 missing_codes.append(code)
                 need_download = True
             else:
-                # 检查数据是否足够130个交易日
                 if len(data[code]) < trade_days_count:
                     print(f"股票 {code} 的交易日数据不足，仅有 {len(data[code])} 个交易日，需要下载")
                     missing_codes.append(code)
