@@ -117,7 +117,7 @@ def check_and_download_minutes_data(data_manager, stock_codes, start_date, end_d
                 # 检查数据是否足够
                 # 分钟级数据每天约240个数据点
                 
-                if len(data[code]) < trade_days_count * 240 *2: 
+                if len(data[code]) < trade_days_count * 240: 
                     print(f"股票 {code} 的分钟级数据不足，仅有 {len(data[code])} 个数据点，需要下载")
                     missing_codes.append(code)
                     need_download = True

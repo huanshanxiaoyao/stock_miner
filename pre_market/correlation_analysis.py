@@ -16,6 +16,7 @@ from stock_code_config import BJ50,BJ50_BLACKLIST
 from date_utils import get_trading_days
 from simple_log import init_logging
 
+MaxSimilarStockCount = 4
 CalendarDaysCount = 180
 logger = init_logging("correlation_analysis")
 
@@ -219,8 +220,6 @@ def calculate_correlations():
     data_manager = DataManager()
     # 设置日期范围
     start_date = (datetime.now() - timedelta(days=CalendarDaysCount)).strftime("%Y%m%d")
-    #只跑截至昨天的数据，如果需要强制跑今天的，修改下面注释
-    #end_date = time.strftime("%Y%m%d", time.localtime())
     end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
     
     # 准备行业数据
@@ -368,7 +367,7 @@ def output_correlation_results(results):
                 if similar_stocks and len(similar_stocks) >= 2 and bj_code in BJ50 and bj_code not in BJ50_BLACKLIST:
                     similarity_data[bj_code] = {
                         "name": bj_name,
-                        "similar_stocks": similar_stocks
+                        "similar_stocks": similar_stocks[:MaxSimilarStockCount]
                     }
             
             f.write("\n\n")
@@ -405,7 +404,7 @@ def check_data_ready():
     
     # 设置日期范围 - 获取180天前的日期
     start_date = (datetime.now() - timedelta(days=CalendarDaysCount)).strftime("%Y%m%d")
-    end_date = time.strftime("%Y%m%d", time.localtime())
+    end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
     # 获取180天前的交易日作为起始日期
     trading_days = get_trading_days(start_date, end_date)
     trading_day_count = len(trading_days)

@@ -17,7 +17,10 @@ CalendarDaysCount = 190
 LongSMALength = 55
 logger = init_logging("compute_safe_range")
 
-def get_historical_data(ticker):
+# 初始化DataManager
+data_manager = DataManager()
+
+def get_historical_data(ticker, start_date, end_date):
     """
     获取股票的历史数据
     
@@ -28,28 +31,17 @@ def get_historical_data(ticker):
     返回:
     pandas.DataFrame: 包含历史价格数据的DataFrame
     """
-    # 计算开始日期 - 为确保获取足够的交易日数据，使用更长的时间跨度
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=CalendarDaysCount)  # 使用180天来确保获取120个交易日
 
-    
-    # 初始化DataManager
-    data_manager = DataManager()
-    
-    # 格式化日期为字符串
-    start_date_str = start_date.strftime("%Y%m%d")
-    end_date_str = end_date.strftime("%Y%m%d")
-
-    trading_days = get_trading_days(start_date_str, end_date_str)
+    trading_days = get_trading_days(start_date, end_date)
     trading_days_count = len(trading_days)
     
     # 使用DataManager获取数据
-    data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)
+    data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date, end_date)
     
     if data_dict is None or ticker not in data_dict or data_dict[ticker].empty or len(data_dict[ticker]) < trading_days_count:
         logger.warning(f"警告: 无法获取 {ticker} 的数据，尝试下载...")
-        data_manager.download_data_sync([ticker], '1d', start_date_str, end_date_str)
-        data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)
+        data_manager.download_data_sync([ticker], '1d', start_date, end_date)
+        data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date, end_date)
         
         if data_dict is None or ticker not in data_dict or data_dict[ticker].empty or len(data_dict[ticker]) < trading_days_count:
             logger.error(f"错误: 无法获取 {ticker} 的数据 退出")
@@ -114,7 +106,7 @@ def calculate_atr(data, period=20):
     
     return atr
 
-def compute_safe_range(ticker):
+def compute_safe_range(ticker, start_date, end_date):
     """
     计算股票的安全交易区间（长期和短期两个口径）
     
@@ -125,7 +117,7 @@ def compute_safe_range(ticker):
     dict: 包含长期和短期安全区间的字典
     """
     # 获取历史数据
-    data = get_historical_data(ticker)
+    data = get_historical_data(ticker, start_date, end_date)
     
     if data is None or len(data) < LongSMALength *2:
         logger.warning(f"警告: 股票 {ticker} 的数据不足，无法计算安全区间")
@@ -332,7 +324,7 @@ def output_results_to_json(results, output_file=None):
     with open(output_file2, 'w', encoding='utf-8') as f:
         f.write(json_str)
     
-    logger.info(f"结果已保存到: {output_file}")
+    logger.info(f"结果已保存到: {output_file2}")
     
     # 如果没有任何变化大于5%的情况，则生成一个标记文件
     if not has_significant_change:
@@ -352,39 +344,56 @@ def main():
     # 股票代码列表
     #tickers = BJ50_Trust
     tickers = HS300 + BJ50_Trust
+    #tickers = ["873593.BJ"]
+    debug = False 
     
     # 初始化DataManager
     data_manager = DataManager()
     
     # 计算开始日期和结束日期
-    end_date = datetime.now()
+    end_date = datetime.now() - timedelta(days=1 )
     start_date = end_date - timedelta(days=CalendarDaysCount )
     
     # 格式化日期为字符串
     start_date_str = start_date.strftime("%Y%m%d")
     end_date_str = end_date.strftime("%Y%m%d")
+
+    trading_days = get_trading_days(start_date_str, end_date_str)
+    #print(trading_days)
+    trading_days_count = len(trading_days)
     
     # 检查历史数据是否准备好，如果没有则下载
+    missing_tickers = []
     for ticker in tickers:
         data_dict = data_manager.get_local_daily_data(['close', 'high', 'low'], [ticker], start_date_str, end_date_str)
-        
-        if data_dict is None or ticker not in data_dict or data_dict[ticker].empty:
-            logger.info(f"股票 {ticker} 的历史数据不存在，正在下载...")
-            data_manager.download_data_sync([ticker], '1d', start_date_str, end_date_str)
-            time.sleep(1)  # 防止过于频繁的下载
-            logger.info(f"股票 {ticker} 的历史数据下载完成")
+        if data_dict is None or ticker not in data_dict or data_dict[ticker].empty :
+            logger.info(f"股票 {ticker} 的历史数据不存在，需要下载...")
+            missing_tickers.append(ticker)
+        if len(data_dict[ticker]) < trading_days_count:
+            logger.info(f"股票 {ticker} 的历史数据长度:{len(data_dict[ticker])}不足 {trading_days_count} 天，需要下载...")
+            #print(data_dict[ticker].index)
+            missing_tickers.append(ticker)
+
+    
+    if missing_tickers:
+        data_manager.download_data_sync(missing_tickers, '1d', start_date_str, end_date_str)
+    time.sleep(len(missing_tickers)/50)  
+    logger.info(f"股票 {ticker} 的历史数据下载完成")
     
     # 计算每个股票的安全交易区间
     results = []
     
     for ticker in tickers:
-        result = compute_safe_range(ticker)
+        result = compute_safe_range(ticker, start_date_str, end_date_str)
         if result:
             results.append(result)
             logger.info(f"已计算 {ticker} 的安全交易区间")
         else:
             logger.warning(f"无法计算 {ticker} 的安全交易区间")
     
+    if debug:
+        print(results)
+        return results
     # 输出结果到JSON文件
     json_file = output_results_to_json(results)
     
