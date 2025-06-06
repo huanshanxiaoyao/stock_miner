@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # 添加上级目录到系统路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_manager import DataManager
-from stock_code_config import BJ50, HS300
+from stock_code_config import BJ50, HS300, BJ_ALL
 from date_utils import get_trading_days
 
 def check_and_download_daily_data(data_manager, stock_codes, start_date, end_date=None):
@@ -49,7 +49,7 @@ def check_and_download_daily_data(data_manager, stock_codes, start_date, end_dat
                 missing_codes.append(code)
                 need_download = True
             else:
-                if len(data[code]) < trade_days_count:
+                if len(data[code]) < trade_days_count + 1:
                     print(f"股票 {code} 的交易日数据不足，仅有 {len(data[code])} 个交易日，需要下载")
                     missing_codes.append(code)
                     need_download = True
@@ -59,6 +59,7 @@ def check_and_download_daily_data(data_manager, stock_codes, start_date, end_dat
         print(f"开始下载 {len(missing_codes)} 只股票的天级数据...")
         # 使用同步下载，确保数据下载完成
         data_manager.download_data_sync(missing_codes, '1d', start_date, end_date)
+        time.sleep(3)  # 等待1秒，确保数据下载完成，避免因网络问题导致数据不完整或缺失
         print("天级数据下载完成，重新获取数据...")
         
         # 重新获取数据
@@ -205,7 +206,7 @@ def main():
     related_codes = get_related_codes()
     
     # 合并股票代码列表，BJ50和SH50是默认必选的
-    all_codes = set(HS300 + BJ50)  # 使用集合避免重复
+    all_codes = set(HS300 + BJ_ALL)  # 使用集合避免重复
     
     # 如果从correlation_results.json中读取到股票代码，也加入进来
     if related_codes:

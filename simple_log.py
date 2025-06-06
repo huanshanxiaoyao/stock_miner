@@ -1,7 +1,8 @@
 import logging
 import os
+from logging.handlers import TimedRotatingFileHandler
 
-def  init_logging(name="correlation_analysis"):
+def init_logging(name="correlation_analysis"):
     """
     初始化日志配置
     """
@@ -14,10 +15,21 @@ def  init_logging(name="correlation_analysis"):
     # 创建logger
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)  # 设置logger的级别为DEBUG，这样所有级别的日志都会被处理
+    
+    # 清除已存在的处理器，避免重复添加
+    if logger.handlers:
+        logger.handlers.clear()
 
-    # 创建文件处理器 - 记录DEBUG及以上级别
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    # 创建按天轮转的文件处理器 - 记录DEBUG及以上级别
+    file_handler = TimedRotatingFileHandler(
+        log_file,
+        when='midnight',     # 每天午夜轮转
+        interval=1,         # 轮转间隔为1天
+        backupCount=7,      # 保留最近7天的日志文件
+        encoding='utf-8'
+    )
     file_handler.setLevel(logging.DEBUG)  # 文件处理器记录DEBUG及以上级别的日志
+    file_handler.suffix = "%Y-%m-%d"  # 设置日志文件后缀格式
 
     # 创建控制台处理器 - 只记录INFO及以上级别
     console_handler = logging.StreamHandler()

@@ -2,9 +2,13 @@
 import pandas as pd
 import os
 import sys
+import time
+import shutil
+import signal  # 添加signal模块导入
 from datetime import datetime, timedelta
 from utils import get_all_stock_codes
 from config import *
+from jq_utils import get_trading_dates
 import multiprocessing as mp  # 添加多进程支持
 from tqdm import tqdm  # 添加进度条支持（如果没有安装，可以使用 pip install tqdm）
 
@@ -16,6 +20,18 @@ from stock_code_config import HS300
 END_DAY = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
 
 DM = DataManager()                     # 单例，避免重复初始化
+
+# 全局变量存储进程池引用
+_pool = None
+
+# 信号处理函数
+def signal_handler(sig, frame):
+    global _pool
+    if _pool is not None:
+        print("\n检测到中断信号，正在终止所有子进程...", flush=True)
+        _pool.terminate()
+        _pool.join()
+    sys.exit(1)
 
 def _reshape_from_stock_key(df: pd.DataFrame, code: str, is_daily=True):
     df = df.reset_index().rename(columns={'index': 'datetime'})
@@ -36,20 +52,20 @@ def _reshape_from_field_key(dm_dict: dict, code: str, is_daily=True):
     long_df['ts_code'] = code
     return long_df
 
-def load_raw(code: str, period: str, stock_info_dict:dict) -> pd.DataFrame:
+def load_raw(code: str, period: str, stock_info:dict) -> pd.DataFrame:
     # 根据股票的上市和退市时间调整 START_DAY 和 END_DAY
     actual_start_day = START_DAY
     actual_end_day = END_DAY
     
-    if code in stock_info_dict:
+    if code in stock_info:
         # 如果股票上市时间晚于 START_DAY，则使用上市时间作为开始时间
-        list_date = stock_info_dict[code].get('list_date')
+        list_date = stock_info.get('list_date')
         if list_date and list_date > START_DAY:
             actual_start_day = list_date
             print(f"[INFO] 调整 {code} 的开始时间为上市日期: {actual_start_day}")
         
         # 如果股票已退市，则使用退市时间作为结束时间
-        delist_date = stock_info_dict[code].get('delist_date')
+        delist_date = stock_info.get('delist_date')
         if delist_date and delist_date != '99991231' and delist_date < END_DAY:
             actual_end_day = delist_date
             print(f"[INFO] 调整 {code} 的结束时间为退市日期: {actual_end_day}")
@@ -96,25 +112,58 @@ def add_features(df:pd.DataFrame) -> pd.DataFrame:
 
 # 处理单个股票的函数
 def process_stock(args):
-    code, stock_info_dict = args
+    code, stock_info = args
     try:
         for period in PERIODS:
-            raw = load_raw(code, period, stock_info_dict)
+            t1 = time.time()
+            raw = load_raw(code, period, stock_info)
             if raw.empty:
                 continue
-                
+            t2 = time.time()    
             fact = add_features(raw)
-            # 分区：日期目录，文件名 = 证券 + 周期
+            t3 = time.time()
+            
+            # 直接写入文件，不需要创建目录
             for day, g in fact.groupby(fact.datetime.dt.date):
                 part_dir = f"{DATA_ROOT}/date={day}"
-                os.makedirs(part_dir, exist_ok=True)
-                g.to_parquet(f"{part_dir}/{code}_{period}.parquet", index=False)
+                output_file = f"{part_dir}/{code}_{period}.parquet"
+                g.to_parquet(output_file, index=False, compression='snappy')
+                
+            t4 = time.time()
+            print(f"[INFO] 处理 {code} {period} 耗时: {t2-t1:.2f}s, 特征处理耗时: {t3-t2:.2f}s, 写入磁盘耗时: {t4-t3:.2f}s", flush=True)
+            
+        # 返回成功标志
         return True
     except Exception as e:
-        print(f"处理股票 {code} 时出错: {e}")
+        print(f"处理股票 {code} 时出错: {e}", flush=True)
         return False
 
+
 def main():
+    # 在main函数开始处添加
+    if sys.platform == 'win32':
+        mp.set_start_method('spawn', force=True)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    print(f"\n{'='*60}")
+    print(f"开始构建事实表 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*60}")
+    
+    # 清理输出目录，确保重新运行时数据一致
+    clean_output_directory()
+
+    # 预先获取交易日期并创建目录
+    print("预先获取交易日期并创建目录...")
+    trading_dates = get_trading_dates(START_DAY, END_DAY)
+
+    # 创建所有交易日目录
+    for day in trading_dates:
+        part_dir = f"{DATA_ROOT}/date={day}"
+        os.makedirs(part_dir, exist_ok=True)
+
+    print(f"已创建 {len(trading_dates)} 个交易日目录")
+    
     # 使用get_all_stock_codes获取所有股票信息
     all_stocks_df = get_all_stock_codes()
     
@@ -138,23 +187,100 @@ def main():
         stock_list = active_stocks['ts_code'].tolist()
         print(f"获取到 {len(stock_list)} 只活跃股票")
 
+    # 删除初始化处理统计的代码
+    
+    print(f"\n[配置信息]")
+    print(f"数据时间范围: {START_DAY} 至 {END_DAY}")
+    print(f"处理周期: {PERIODS}")
+    print(f"输出目录: {DATA_ROOT}")
+    print(f"待处理股票数量: {len(stock_list)}")
+    
     # 多进程处理股票数据
     num_processes = min(8, mp.cpu_count() - 1)  # 使用CPU核心数减1，留一个核心给系统
     if num_processes < 1:
         num_processes = 1
     
     print(f"使用 {num_processes} 个进程并行处理数据...")
+    print(f"\n开始处理...")
     
     # 准备参数列表
-    args_list = [(code, stock_info_dict) for code in stock_list]
+    args_list = [(code, stock_info_dict.get(code, {})) for code in stock_list]
     
+    # 手动创建进程池
+    global _pool
+    _pool = mp.Pool(processes=num_processes)
+
     # 使用进程池并行处理
-    with mp.Pool(processes=num_processes) as pool:
-        results = list(tqdm(pool.imap(process_stock, args_list), total=len(args_list), desc="处理进度"))
+    try:
+        # 使用imap_unordered可能会更高效，因为不需要保持顺序
+        results = list(tqdm(_pool.imap_unordered(process_stock, args_list, chunksize=40), 
+                          total=len(args_list), 
+                          desc="总体进度"))
+    except KeyboardInterrupt:
+        print("检测到中断信号，正在终止所有子进程...")
+        _pool.terminate()
+        _pool.join()
+        raise
+    except Exception as e:
+        print(f"发生错误: {e}")
+        _pool.terminate()
+        _pool.join()
+        raise
+    else:
+        # 正常完成时关闭池
+        _pool.close()
+    finally:
+        # 确保在所有情况下都等待进程结束
+        _pool.join()
     
-    # 统计处理结果
+    # 最终统计
     success_count = results.count(True)
-    print(f"处理完成: 成功 {success_count}/{len(stock_list)} 只股票")
+    
+    print(f"\n{'='*60}")
+    print(f"处理完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*60}")
+    print(f"成功处理: {success_count}/{len(stock_list)} 只股票")
+    # 删除处理速度相关的输出
+    print(f"输出目录: {DATA_ROOT}")
+    
+    if success_count < len(stock_list):
+        failed_count = len(stock_list) - success_count
+        print(f"\n[警告] {failed_count} 只股票处理失败")
+
+def clean_output_directory():
+    """使用重命名策略清理输出目录，效率更高"""
+    import uuid
+    
+    if os.path.exists(DATA_ROOT):
+        print(f"[清理] 重命名现有输出目录: {DATA_ROOT}")
+        try:
+            # 生成临时目录名
+            temp_dir = f"{DATA_ROOT}_old_{uuid.uuid4().hex[:8]}"
+            
+            # 重命名旧目录（这是一个快速操作，不需要复制文件）
+            os.rename(DATA_ROOT, temp_dir)
+            print(f"[清理] 旧目录已重命名为: {temp_dir}")
+            
+            # 创建新的空目录
+            os.makedirs(DATA_ROOT, exist_ok=True)
+            print(f"[初始化] 创建新的输出目录: {DATA_ROOT}")
+            
+            # 在后台异步删除旧目录
+            import threading
+            threading.Thread(target=lambda: shutil.rmtree(temp_dir, ignore_errors=True), 
+                           daemon=True).start()
+            print(f"[清理] 已启动后台线程删除旧目录")
+            
+        except Exception as e:
+            print(f"[警告] 清理输出目录时出错: {e}")
+            # 确保目录存在
+            os.makedirs(DATA_ROOT, exist_ok=True)
+    else:
+        # 如果目录不存在，创建它
+        os.makedirs(DATA_ROOT, exist_ok=True)
+        print(f"[初始化] 创建新的输出目录: {DATA_ROOT}")
+
+
 
 if __name__ == "__main__":
     main()

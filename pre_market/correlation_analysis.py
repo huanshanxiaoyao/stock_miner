@@ -19,9 +19,14 @@ from simple_log import init_logging
 MaxSimilarStockCount = 4
 CalendarDaysCount = 180
 logger = init_logging("correlation_analysis")
+# 初始化DataManager
+data_manager = DataManager()
+
+#临时加了几个本策略特有的黑名单，
+BLACKLIST = BJ50_BLACKLIST + ["833533.BJ", "832982.BJ", "835438.BJ"]
 
 
-def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_date):
+def calculate_stock_correlation(stock_a, stock_b, start_date, end_date):
     """
     计算主函数
     计算两只股票之间的收盘价和成交量的皮尔逊相关系数
@@ -42,7 +47,10 @@ def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_
     trading_day_count = len(trading_days)
     
     # 获取两只股票的数据
-    data = data_manager.get_local_daily_data(['close', 'volume'], [stock_a, stock_b], start_date, end_date)
+    codes = [stock_a, stock_b]
+    data = data_manager.get_local_daily_data(['close', 'volume'], codes, start_date, end_date)
+
+    #logger.info(f"数据获取, {codes},{start_date},{end_date}")
     
     if data is None or stock_a not in data or stock_b not in data:
         logger.error(f"数据获取失败，股票代码: {stock_a}, {stock_b}")
@@ -62,7 +70,7 @@ def calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_
     common_index = a_close.index.intersection(b_close.index)
     
     if len(common_index) < trading_day_count:
-        logger.error(f"数据不足，股票代码: {stock_a}, {stock_b}, {len(common_index)}")
+        logger.error(f"数据不足，股票代码: {stock_a}, {stock_b}, {len(a_close)},{len(b_close)},{len(common_index)}")
         return None
     
     # 对齐数据
@@ -216,8 +224,7 @@ def calculate_correlations():
     业务主函数
     读取industry_classification.txt，计算同一分组内北交所股票与A股股票的皮尔逊相关系数
     """
-    # 初始化DataManager
-    data_manager = DataManager()
+
     # 设置日期范围
     start_date = (datetime.now() - timedelta(days=CalendarDaysCount)).strftime("%Y%m%d")
     end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
@@ -250,7 +257,7 @@ def calculate_correlations():
             for a_code in a_codes:
                 # 计算相关系数
                 corr_result = calculate_stock_correlation(
-                    data_manager, bj_code, a_code, start_date, end_date
+                    bj_code, a_code, start_date, end_date
                 )
                 
                 if corr_result:
@@ -364,7 +371,7 @@ def output_correlation_results(results):
                 f.write("\n")
                 
                 # 将相似股票添加到数据中
-                if similar_stocks and len(similar_stocks) >= 2 and bj_code in BJ50 and bj_code not in BJ50_BLACKLIST:
+                if similar_stocks and len(similar_stocks) >= 2 and bj_code in BJ50 and bj_code not in BLACKLIST:
                     similarity_data[bj_code] = {
                         "name": bj_name,
                         "similar_stocks": similar_stocks[:MaxSimilarStockCount]
@@ -395,12 +402,8 @@ def output_correlation_results(results):
 def check_data_ready():
     """
     检查数据完整性，确保所有股票从过去180天至今的天级数据完整
-    要求有效数据至少为120条
     """
     logger.info("开始检查数据完整性...")
-    
-    # 初始化DataManager
-    data_manager = DataManager()
     
     # 设置日期范围 - 获取180天前的日期
     start_date = (datetime.now() - timedelta(days=CalendarDaysCount)).strftime("%Y%m%d")
@@ -435,16 +438,13 @@ def check_data_ready():
     batch_size = 100
     code_batches = [list(all_codes)[i:i+batch_size] for i in range(0, len(all_codes), batch_size)]
     
-    #调用一次触发xtdata的初始化，否则容易取到更多的空数据
-    data_manager.get_local_daily_data(['close'], ['002034.SZ'], start_date, end_date)
     
     for batch_idx, code_batch in enumerate(code_batches):
-        time.sleep(0.1)  # 每批次检查后暂停1秒
+        #time.sleep(0.1)  # 每批次检查后暂停1秒
         logger.info(f"检查批次 {batch_idx+1}/{len(code_batches)}，共 {len(code_batch)} 只股票")
         
         # 获取数据
-        data = data_manager.get_local_daily_data(['close'], code_batch, start_date, end_date)
-        
+        data = data_manager.get_local_daily_data(['close', 'volume'], code_batch, start_date, end_date)
         if data is None:
             logger.error("数据获取失败")
             missing_stocks.extend(code_batch)
@@ -464,7 +464,7 @@ def check_data_ready():
             
             # 检查数据点数量
             data_points = len(data[code])
-            #print(f"  股票 {code} 数据点数量: {data_points}, 时间索引: {data[code].index.tolist()}")
+            #logger.info(f"  股票 {code} 数据点数量: {data_points}, 时间索引: {len(data[code].index)}")
             if data_points < trading_day_count:
                 logger.warning(f"  股票 {code} 数据不足，仅有 {data_points} 条记录, 预期: {trading_day_count} 条记录")
                 incomplete_stocks.append((code, data_points))
@@ -492,17 +492,18 @@ def check_data_ready():
     return len(missing_stocks) == 0 and len(incomplete_stocks) == 0
 
 def test_pair():
-    data_manager = DataManager()
-    stock_a = '838402.BJ'
-    stock_b = '002109.SZ'
-    start_date = '20241201'
-    data_manager.download_data_async([stock_a, stock_b], '1d', start_date)
-    ret = calculate_stock_correlation(data_manager, stock_a, stock_b, start_date)
-    #print(ret)
+    stock_a = "839946.BJ"
+    stock_b = "002239.SZ"
+    start_date = (datetime.now() - timedelta(days=CalendarDaysCount)).strftime("%Y%m%d")
+    end_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+    data_manager.download_data_async([stock_a, stock_b], '1d', start_date, end_date)
+    ret = calculate_stock_correlation(data_manager, stock_a, stock_b, start_date, end_date)
+    print(ret)
 
 if __name__ == "__main__":
     #calculate_correlations()
     #test_pair()
+    #check_data_ready()
     #sys.exit()
     if check_data_ready():
         calculate_correlations()
