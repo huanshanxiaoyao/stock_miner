@@ -2,7 +2,7 @@ import jqdatasdk as jq
 
 jq.auth("18701341286", "120502JoinQuant")
 
-def get_trading_dates(start_date, end_date):
+def get_trading_days(start_date, end_date):
     """获取实际的交易日期列表,日期格式2025-01-02"""
     if isinstance(start_date, str) and len(start_date) == 8:
         # 将"20200101"格式转换为"2020-01-01"格式

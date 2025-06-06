@@ -37,7 +37,7 @@ def download_stock_data(stock_codes, stock_info_dict):
 
 def main():
     # 获取CPU核心数，但最多使用8个进程以避免过度并行
-    num_processes = min(4, mp.cpu_count())
+    num_processes = min(8, mp.cpu_count())
     
     # 使用get_all_stock_codes获取所有股票信息
     all_stocks_df = get_all_stock_codes()

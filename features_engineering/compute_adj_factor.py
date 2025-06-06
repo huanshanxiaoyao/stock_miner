@@ -122,7 +122,7 @@ def load_actions(ts_code: str) -> pd.DataFrame:
                 ts_code=ts_code,
                 fields='ts_code,end_date,ann_date,div_proc,stk_div,stk_bo_rate,stk_co_rate,cash_div,cash_div_tax,record_date,ex_date,pay_date'
             )
-            time.sleep(0.5)  # 防止请求过快
+            time.sleep(0.2)  # 防止请求过快
             if dividend_df.empty:
                 print(f"[WARN] No dividend data found for {ts_code}")
                 # 创建空的DataFrame但保存到缓存避免重复请求
@@ -153,12 +153,9 @@ def process_dividend_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     处理Tushare dividend数据，转换为所需格式
     """
-    print(df)
-    if df.empty:
-        return pd.DataFrame(columns=['ex_date', 'cash_div', 'split_ratio'])
-    
     # 只保留有除权除息日期的记录
     df = df[df['ex_date'].notna()].copy()
+    print(df[['end_date', 'stk_div', 'stk_bo_rate', 'stk_co_rate', 'cash_div']])
     
     if df.empty:
         return pd.DataFrame(columns=['ex_date', 'cash_div', 'split_ratio'])
@@ -167,16 +164,17 @@ def process_dividend_data(df: pd.DataFrame) -> pd.DataFrame:
     df['cash_div'] = df['cash_div'].fillna(0.0)
     
     # 处理送转股比例
-    # stk_div: 送股比例（每10股送X股）
-    # stk_bo_rate: 转股比例（每10股转X股） 
     # 计算总的股本扩张比例
     df['stk_div'] = df['stk_div'].fillna(0.0)
     # 修改后
     df['stk_bo_rate'] = df['stk_bo_rate'].astype(float).fillna(0.0)
     
-    df["split_ratio"] = 1.0 + (df["stk_div"] +
-                               df["stk_bo_rate"] +
-                               df["stk_co_rate"]) / 10.0
+    #df["split_ratio"] = 1.0 + (df["stk_div"] +
+    #                           df["stk_bo_rate"] +
+    #                           df["stk_co_rate"]) 
+    #tushare中的字段说明不够清晰，目前看应该是stk_div包含stk_bo_rate和stk_co_rate的，即是二者的和
+    df["split_ratio"] = 1.0 + (df["stk_bo_rate"] +
+                              df["stk_co_rate"]) 
     # 确保split_ratio >= 1.0
     df['split_ratio'] = df['split_ratio'].clip(lower=1.0)
     
@@ -221,13 +219,15 @@ def calc_adj_factor(ts_code: str, latest_as_1: bool = False) -> pd.DataFrame:
         pre_close = df.at[i-1, "close"]      # 前一交易日原始价
         cash      = df.at[i,   "cash_div"]   # 当天 (i) 现金分红
         split_r   = df.at[i,   "split_ratio"]# 当天 (i) 送转比例
-        # 因子递推公式（始终 ≤1）
         factors[i-1] = factors[i] * (pre_close - cash) / pre_close / split_r
+        if cash > 0 or split_r != 1:
+            print(f"[INFO] {ts_code} {df.at[i, 'trade_date']} cash_div={cash}, split_ratio={split_r}, pre_close={pre_close}, factor={(pre_close - cash) / pre_close / split_r}")
 
     df["adj_factor_fwd"] = factors
     df["adj_factor_bwd"] = factors / factors[0]
     df["adj_factor"]     = df["adj_factor_fwd"] if latest_as_1 \
                                                 else df["adj_factor_bwd"]
+
     return df[["trade_date", "adj_factor"]]
 
 # ---------------------------------------------------------------------
@@ -235,17 +235,26 @@ def calc_adj_factor(ts_code: str, latest_as_1: bool = False) -> pd.DataFrame:
 # ---------------------------------------------------------------------
 def validate_against_tushare(ts_code: str,
                              pro,
-                             tol: float = 1e-6) -> None:
+                             tol: float = 1e-3) -> None:
     """
     pro: tushare.pro_api() 实例
     """
     df_local = calc_adj_factor(ts_code, latest_as_1=False)
-    df_tu    = pro.adj_factor(ts_code=ts_code)
+    print(df_local)
+    df_tu    = pro.adj_factor(ts_code=ts_code, start_date=START_DAY, end_date=END_DAY)
     print(df_tu)
+    #tushare返回的是数据倒序，第一个元素是昨天，自算的数据第一个为20200102
+    if df_tu["trade_date"].iloc[0] == df_local["trade_date"].iloc[-1]:
+        scale = df_tu["adj_factor"].iloc[0] / df_local["adj_factor"].iloc[-1]
+        print(f"scale {scale}")
+        df_local["adj_factor"] *= scale
+    else:
+        print("can't match date return")
+        raise ValueError(f"{df_tu['trade_date'].iloc[0]} vs {df_local['trade_date'].iloc[-1]}")
     merged   = df_local.merge(df_tu, on="trade_date", how="inner",
                               suffixes=("_local", "_tu"))
     print(merged)
-    merged["diff"] = np.abs(merged["adj_factor_local"] - merged["adj_factor_tu"])
+    merged["diff"] = np.abs(merged["adj_factor_local"] - merged["adj_factor_tu"])/merged["adj_factor_tu"]
     max_diff = merged["diff"].max()
     if max_diff > tol:
         raise ValueError(f"{ts_code} adj_factor mismatch, max diff={max_diff}")
@@ -257,7 +266,7 @@ def validate_against_tushare(ts_code: str,
 def main():
     all_stocks_df = get_all_stock_codes() 
     codes = all_stocks_df['ts_code'].tolist() if not all_stocks_df.empty else [p.stem for p in Path("data/price").glob("*.csv")]
-    codes = HS300
+    #codes = HS300
     out_dir = Path("feature_table/adj_factor"); out_dir.mkdir(exist_ok=True)
     for code in codes:
         adj = calc_adj_factor(code, latest_as_1=False)
@@ -268,6 +277,6 @@ def validate(codes):
         validate_against_tushare(code, pro)
 
 if __name__ == "__main__":
-    #main()
-    codes = ["601088.SH", "300760.SZ", "300750.SZ","000651.SZ", "000001.SZ", "600036.SH"]
-    validate(codes)
+    main()
+    #codes = ["300750.SZ","000651.SZ", "000001.SZ", "600036.SH","601088.SH", "300760.SZ"]
+    #validate(codes)

@@ -150,7 +150,7 @@ def save_financial_data(financial_data, output_dir='financial_data'):
 
 def main():
     # 获取股票列表
-    stock_list = ['000001.SZ', '600519.SH']
+    stock_list = ['000001.SZ', '600519.SH', '000651.SZ']
     
     # 获取财务数据
     print("正在获取财务数据...")
