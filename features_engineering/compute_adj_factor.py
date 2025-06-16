@@ -25,7 +25,7 @@ START_DAY = "20200101"  # 可以根据需要调整
 END_DAY = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
 
 # 本地缓存目录
-ACTIONS_CACHE_DIR = Path("data/actions")
+ACTIONS_CACHE_DIR = Path("tushare_data/dividend")
 ACTIONS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 pro = ts.pro_api(token="34e154b48c608f6dd444cb1749b69828a4eec91c1065da4ff5fca6d7")
@@ -268,9 +268,11 @@ def main():
     codes = all_stocks_df['ts_code'].tolist() if not all_stocks_df.empty else [p.stem for p in Path("data/price").glob("*.csv")]
     #codes = HS300
     out_dir = Path("feature_table/adj_factor"); out_dir.mkdir(exist_ok=True)
-    for code in codes:
+    for idx, code in enumerate(codes):
         adj = calc_adj_factor(code, latest_as_1=False)
         adj.to_parquet(out_dir / f"{code}.parquet", index=False)
+        if idx % 100 == 99:
+            print(f"[INFO] {idx}/{len(codes)} done")
 
 def validate(codes):
     for code in codes:

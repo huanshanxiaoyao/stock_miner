@@ -17,6 +17,8 @@ CalendarDaysCount = 190
 LongSMALength = 55
 logger = init_logging("compute_safe_range")
 
+debug = False
+
 # 初始化DataManager
 data_manager = DataManager()
 
@@ -344,8 +346,9 @@ def main():
     # 股票代码列表
     #tickers = BJ50_Trust
     tickers = HS300 + BJ50_Trust
-    #tickers = ["873593.BJ"]
-    debug = False 
+    if debug:
+        tickers = ["832522.BJ"]
+
     
     # 初始化DataManager
     data_manager = DataManager()
